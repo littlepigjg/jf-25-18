@@ -17,6 +17,8 @@ let historyOffset = 0;
 let historyHasMore = false;
 let historyTotal = 0;
 let currentFiles = [];
+let currentExportMode = 'full';
+let currentExportState = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   initCharts();
@@ -285,6 +287,22 @@ function bindEvents() {
   document.getElementById('maxFileSize').addEventListener('input', (e) => {
     document.getElementById('maxFileSizeValue').textContent = e.target.value + ' MB';
   });
+
+  document.querySelectorAll('.export-mode-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.export-mode-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      currentExportMode = tab.dataset.mode;
+      updateExportModeUI();
+      updateExportInfo();
+    });
+  });
+
+  document.getElementById('btnResetExportState').addEventListener('click', () => {
+    if (confirm('确定要重置导出起点吗？重置后下次增量导出将从最早的数据开始。')) {
+      ipcRenderer.send('reset-export-state');
+    }
+  });
 }
 
 function switchTab(tab) {
@@ -377,7 +395,16 @@ ipcRenderer.on('thresholds-updated', (event, thresholds) => {
 });
 
 ipcRenderer.on('export-success', (event, data) => {
-  showToast('success', `已导出 ${data.count} 条记录到: ${data.file}`);
+  if (data.isIncremental) {
+    let msg = `[增量导出] 已导出 ${data.count} 条记录到: ${data.file}`;
+    if (data.savedTimeEstimate > 0) {
+      msg += ` (节省约 ${data.savedTimeEstimate}% 时间和空间)`;
+    }
+    showToast('success', msg);
+  } else {
+    showToast('success', `已导出 ${data.count} 条记录到: ${data.file}`);
+  }
+  ipcRenderer.send('get-export-state');
   closeExportModal();
 });
 
@@ -415,6 +442,23 @@ ipcRenderer.on('old-logs-deleted', (event, result) => {
   showToast('success', `已删除 ${result.count} 个旧日志文件`);
   closeCleanModal();
   refreshFiles();
+});
+
+ipcRenderer.on('export-state', (event, state) => {
+  currentExportState = state;
+  renderIncrementalStatus(state);
+  renderExportBenefits(state);
+});
+
+ipcRenderer.on('export-state-reset', (event, result) => {
+  if (result.success) {
+    showToast('success', '已重置导出起点，下次增量导出将从头开始');
+    currentExportState = result.state;
+    renderIncrementalStatus(result.state);
+    renderExportBenefits(result.state);
+  } else {
+    showToast('error', `重置失败: ${result.error}`);
+  }
 });
 
 function updateStats(data) {
@@ -743,6 +787,12 @@ function saveSettings() {
 }
 
 function openExportModal() {
+  currentExportMode = 'full';
+  document.querySelectorAll('.export-mode-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.mode === 'full');
+  });
+  ipcRenderer.send('get-export-state');
+  updateExportModeUI();
   updateExportInfo();
   document.getElementById('exportModal').classList.add('active');
 }
@@ -757,21 +807,40 @@ function updateExportInfo() {
   const includeProcesses = document.getElementById('exportIncludeProcesses').checked;
   
   let estimatedSize = '未知';
-  let recordCount = currentFiles.reduce((sum, f) => sum + f.recordCount, 0);
-  
-  if (range === 'today') {
-    recordCount = Math.round(recordCount * 0.1);
-  } else if (range === 'week') {
-    recordCount = Math.round(recordCount * 0.5);
+  let recordCount;
+
+  if (currentExportMode === 'incremental' && currentExportState) {
+    recordCount = currentExportState.remainingRecords || 0;
+  } else {
+    recordCount = currentFiles.reduce((sum, f) => sum + f.recordCount, 0);
+    
+    if (range === 'today') {
+      recordCount = Math.round(recordCount * 0.1);
+    } else if (range === 'week') {
+      recordCount = Math.round(recordCount * 0.5);
+    }
   }
   
   const sizePerRecord = includeProcesses ? 1.5 : 0.5;
-  const estBytes = recordCount * sizePerRecord * 1024;
+  const estBytes = Math.max(0, recordCount) * sizePerRecord * 1024;
   estimatedSize = formatBytes(estBytes);
   
   const formatName = format === 'csv' ? 'CSV（推荐，打开速度快）' : 'JSON（完整数据）';
+  const modeLabel = currentExportMode === 'incremental' ? '增量导出' : '全量导出';
+  
+  let extraInfo = '';
+  if (currentExportMode === 'incremental') {
+    if (currentExportState?.isPartialExport) {
+      extraInfo = `<div class="text-warning"><strong>⚠️ 检测到未完成的导出任务，可从断点继续</strong></div><br>`;
+    }
+    if (recordCount === 0 && !currentExportState?.isPartialExport) {
+      extraInfo = `<div class="text-success"><strong>✓ 暂无新增数据需要导出</strong></div><br>`;
+    }
+  }
   
   document.getElementById('exportInfo').innerHTML = `
+    ${extraInfo}
+    导出模式: <strong>${modeLabel}</strong><br>
     导出格式: <strong>${formatName}</strong><br>
     预计记录数: <strong>${recordCount.toLocaleString()}</strong> 条<br>
     预计文件大小: <strong>${estimatedSize}</strong><br>
@@ -786,34 +855,51 @@ function confirmExport() {
   
   let startTime = null;
   let endTime = null;
+  const isIncremental = currentExportMode === 'incremental';
+  const resumeFromBreakpoint = isIncremental && currentExportState?.isPartialExport;
   
-  const now = new Date();
-  
-  if (range === 'today') {
-    startTime = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-    endTime = now.toISOString();
-  } else if (range === 'week') {
-    startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    endTime = now.toISOString();
-  } else if (range === 'custom') {
-    const startVal = document.getElementById('exportStartTime').value;
-    const endVal = document.getElementById('exportEndTime').value;
-    if (!startVal || !endVal) {
-      showToast('warning', '请选择自定义时间范围');
-      return;
+  if (!isIncremental) {
+    const now = new Date();
+    
+    if (range === 'today') {
+      startTime = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      endTime = now.toISOString();
+    } else if (range === 'week') {
+      startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      endTime = now.toISOString();
+    } else if (range === 'custom') {
+      const startVal = document.getElementById('exportStartTime').value;
+      const endVal = document.getElementById('exportEndTime').value;
+      if (!startVal || !endVal) {
+        showToast('warning', '请选择自定义时间范围');
+        return;
+      }
+      startTime = new Date(startVal).toISOString();
+      endTime = new Date(endVal).toISOString();
     }
-    startTime = new Date(startVal).toISOString();
-    endTime = new Date(endVal).toISOString();
+  }
+
+  if (isIncremental && currentExportState && currentExportState.remainingRecords === 0 && !resumeFromBreakpoint) {
+    showToast('info', '暂无可导出的新增数据');
+    return;
   }
   
   ipcRenderer.send('export-report', {
     format,
     startTime,
     endTime,
-    includeProcesses
+    includeProcesses,
+    isIncremental,
+    resumeFromBreakpoint
   });
   
-  showToast('info', '正在导出，请稍候...');
+  if (resumeFromBreakpoint) {
+    showToast('info', '正在从断点继续导出，请稍候...');
+  } else if (isIncremental) {
+    showToast('info', '正在增量导出，请稍候...');
+  } else {
+    showToast('info', '正在导出，请稍候...');
+  }
 }
 
 function openCleanModal() {
@@ -868,4 +954,132 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+function updateExportModeUI() {
+  const incrementalStatusCard = document.getElementById('incrementalStatusCard');
+  const exportBenefitsCard = document.getElementById('exportBenefitsCard');
+  const exportRangeContainer = document.getElementById('exportRangeContainer');
+  const customRangeContainer = document.getElementById('customRangeContainer');
+  const customRangeEndContainer = document.getElementById('customRangeEndContainer');
+
+  if (currentExportMode === 'incremental') {
+    incrementalStatusCard.style.display = 'block';
+    exportBenefitsCard.style.display = 'block';
+    exportRangeContainer.style.display = 'none';
+    customRangeContainer.style.display = 'none';
+    customRangeEndContainer.style.display = 'none';
+  } else {
+    incrementalStatusCard.style.display = 'none';
+    exportBenefitsCard.style.display = 'none';
+    exportRangeContainer.style.display = 'flex';
+    const range = document.getElementById('exportRange').value;
+    const isCustom = range === 'custom';
+    customRangeContainer.style.display = isCustom ? 'flex' : 'none';
+    customRangeEndContainer.style.display = isCustom ? 'flex' : 'none';
+  }
+}
+
+function renderIncrementalStatus(state) {
+  const body = document.getElementById('incrementalStatusBody');
+  if (!state) {
+    body.innerHTML = '<div class="empty-state">暂无状态信息</div>';
+    return;
+  }
+
+  let html = '';
+
+  if (state.isPartialExport && state.breakpoint) {
+    html += `
+      <div class="status-warning">
+        <span class="warning-icon">⚠️</span>
+        <div>
+          <div><strong>检测到未完成的导出任务</strong></div>
+          <div class="text-secondary" style="font-size: 12px;">已导出 ${state.breakpoint.exportedCount?.toLocaleString() || 0} 条，点击导出将从断点继续</div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (state.lastExportTimestamp) {
+    html += `
+      <div class="status-row">
+        <span class="status-label">上次导出时间</span>
+        <span class="status-value">${new Date(state.lastExportTime).toLocaleString('zh-CN')}</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">上次导出记录</span>
+        <span class="status-value">${state.lastExportCount?.toLocaleString() || 0} 条</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">累计已导出</span>
+        <span class="status-value">${state.totalExportedCount?.toLocaleString() || 0} 条</span>
+      </div>
+    `;
+  } else {
+    html += `
+      <div class="status-row">
+        <span class="status-label">导出状态</span>
+        <span class="status-value">尚未进行过增量导出</span>
+      </div>
+    `;
+  }
+
+  html += `
+    <div class="status-row highlight">
+      <span class="status-label">待导出新增数据</span>
+      <span class="status-value highlight-value">${state.remainingRecords?.toLocaleString() || 0} 条</span>
+    </div>
+  `;
+
+  if (state.totalRecords > 0) {
+    const percent = state.totalExportedCount ? Math.round(state.totalExportedCount / state.totalRecords * 100) : 0;
+    html += `
+      <div class="status-progress">
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" style="width: ${percent}%"></div>
+        </div>
+        <div class="progress-text">总进度: ${percent}% (${state.totalExportedCount?.toLocaleString() || 0}/${state.totalRecords?.toLocaleString() || 0})</div>
+      </div>
+    `;
+  }
+
+  body.innerHTML = html;
+}
+
+function renderExportBenefits(state) {
+  if (!state || !state.totalRecords || state.remainingRecords === undefined) {
+    return;
+  }
+
+  const totalRecords = state.totalRecords;
+  const incrementalRecords = state.remainingRecords;
+  const savedRecords = Math.max(0, totalRecords - incrementalRecords);
+  const savedPercent = totalRecords > 0 ? Math.round(savedRecords / totalRecords * 100) : 0;
+
+  const sizePerRecord = 1;
+  const fullSize = totalRecords * sizePerRecord * 1024;
+  const incrementalSize = incrementalRecords * sizePerRecord * 1024;
+  const savedSize = fullSize - incrementalSize;
+
+  const timePerRecord = 0.001;
+  const fullTime = totalRecords * timePerRecord;
+  const incrementalTime = incrementalRecords * timePerRecord;
+  const savedTime = fullTime - incrementalTime;
+
+  function formatDuration(seconds) {
+    if (seconds < 60) return seconds.toFixed(1) + ' 秒';
+    if (seconds < 3600) return Math.round(seconds / 60) + ' 分钟';
+    return (seconds / 3600).toFixed(1) + ' 小时';
+  }
+
+  document.getElementById('benefitTime').textContent = savedPercent > 0 
+    ? `约 ${savedPercent}% (${formatDuration(Math.max(0, savedTime))})` 
+    : '暂无节省';
+  document.getElementById('benefitSpace').textContent = savedSize > 0 
+    ? `${formatBytes(savedSize)} (${savedPercent}%)` 
+    : '暂无节省';
+  document.getElementById('benefitRecords').textContent = savedRecords > 0 
+    ? `${savedRecords.toLocaleString()} 条` 
+    : '0 条';
 }

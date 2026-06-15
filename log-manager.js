@@ -27,6 +27,16 @@ class LogManager extends EventEmitter {
     this.fileIndex = [];
     this.writeStream = null;
     this.isFlushing = false;
+    this.exportState = {
+      lastExportTimestamp: null,
+      lastExportFile: null,
+      lastExportCount: 0,
+      lastExportTime: null,
+      lastExportSize: 0,
+      totalExportedCount: 0,
+      breakpoint: null,
+      isPartialExport: false
+    };
   }
 
   async start(logDir) {
@@ -45,6 +55,7 @@ class LogManager extends EventEmitter {
     }
 
     await this._loadFileIndex();
+    await this._loadExportState();
     await this._createNewFile();
     this.isLogging = true;
 
@@ -68,6 +79,7 @@ class LogManager extends EventEmitter {
     await this._flush(true);
     await this._closeWriteStream();
     await this._saveFileIndex();
+    await this._saveExportState();
 
     this.emit('stopped', { 
       file: this.currentFile, 
@@ -309,6 +321,53 @@ class LogManager extends EventEmitter {
     }
   }
 
+  async _loadExportState() {
+    const statePath = path.join(this.options.logDir, '.export_state.json');
+    if (fs.existsSync(statePath)) {
+      try {
+        const content = fs.readFileSync(statePath, this.options.encoding);
+        this.exportState = { ...this.exportState, ...JSON.parse(content) };
+      } catch (err) {
+        this.emit('error', { type: 'load-export-state', error: err.message });
+      }
+    }
+  }
+
+  async _saveExportState() {
+    const statePath = path.join(this.options.logDir, '.export_state.json');
+    try {
+      fs.writeFileSync(statePath, JSON.stringify(this.exportState, null, 2), this.options.encoding);
+    } catch (err) {
+      this.emit('error', { type: 'save-export-state', error: err.message });
+    }
+  }
+
+  getExportState() {
+    const totalRecords = this.getTotalRecordCount();
+    const remainingRecords = Math.max(0, totalRecords - this.exportState.totalExportedCount);
+    return {
+      ...this.exportState,
+      totalRecords,
+      remainingRecords,
+      hasPendingExports: remainingRecords > 0 || this.exportState.isPartialExport
+    };
+  }
+
+  async resetExportState() {
+    this.exportState = {
+      lastExportTimestamp: null,
+      lastExportFile: null,
+      lastExportCount: 0,
+      lastExportTime: null,
+      lastExportSize: 0,
+      totalExportedCount: 0,
+      breakpoint: null,
+      isPartialExport: false
+    };
+    await this._saveExportState();
+    return this.exportState;
+  }
+
   async queryRecords(options = {}) {
     const { 
       startTime, 
@@ -421,19 +480,70 @@ class LogManager extends EventEmitter {
       includeProcesses = true,
       includeSummary = true,
       fields = null,
-      onProgress = null
+      onProgress = null,
+      isIncremental = false,
+      resumeFromBreakpoint = false
     } = options;
 
-    const matchingFiles = this._findMatchingFiles(startTime, endTime);
-    const totalEstimated = this._estimateTotalCount(matchingFiles, startTime, endTime);
+    let effectiveStartTime = startTime;
+    let incrementalStartTimestamp = null;
+
+    if (isIncremental) {
+      if (resumeFromBreakpoint && this.exportState.breakpoint) {
+        const bp = this.exportState.breakpoint;
+        effectiveStartTime = bp.lastTimestamp;
+        incrementalStartTimestamp = bp.incrementalStart;
+      } else if (this.exportState.lastExportTimestamp) {
+        effectiveStartTime = this.exportState.lastExportTimestamp;
+        incrementalStartTimestamp = this.exportState.lastExportTimestamp;
+      } else {
+        effectiveStartTime = null;
+        incrementalStartTimestamp = null;
+      }
+    }
+
+    const matchingFiles = this._findMatchingFiles(effectiveStartTime, endTime);
+    const totalEstimated = this._estimateTotalCount(matchingFiles, effectiveStartTime, endTime);
     let totalExported = 0;
     let processedCount = 0;
     let lastProgressEmit = 0;
+    let lastRecordTimestamp = incrementalStartTimestamp || effectiveStartTime || null;
+    let fileIndexOffset = 0;
+    let lineByteOffset = 0;
+    let currentFileName = '';
+    let isFirstRecord = true;
+
+    if (isIncremental && resumeFromBreakpoint && this.exportState.breakpoint) {
+      const bp = this.exportState.breakpoint;
+      fileIndexOffset = bp.fileIndex;
+      lineByteOffset = bp.lineByteOffset;
+      totalExported = bp.exportedCount;
+      isFirstRecord = !bp.headerWritten;
+    }
 
     const summary = {
       cpu: { sum: 0, count: 0, avg: 0, max: -Infinity, min: Infinity },
       memory: { sum: 0, count: 0, avg: 0, max: -Infinity, min: Infinity },
       disk: { sum: 0, count: 0, avg: 0, max: -Infinity, min: Infinity }
+    };
+
+    const saveBreakpoint = async () => {
+      if (!isIncremental) return;
+      this.exportState.breakpoint = {
+        fileIndex: fileIndexOffset,
+        lineByteOffset,
+        lastTimestamp: lastRecordTimestamp,
+        exportedCount: totalExported,
+        headerWritten: !isFirstRecord || format === 'jsonl',
+        incrementalStart: incrementalStartTimestamp,
+        outputPath,
+        format,
+        includeProcesses,
+        startTime: effectiveStartTime,
+        endTime
+      };
+      this.exportState.isPartialExport = true;
+      await this._saveExportState();
     };
 
     const emitProgress = () => {
@@ -445,14 +555,18 @@ class LogManager extends EventEmitter {
             exported: totalExported,
             total: totalEstimated,
             percent: Math.min(100, Math.round((totalExported / totalEstimated) * 100)),
-            currentFile: matchingFiles[Math.min(matchingFiles.length - 1, 
+            currentFile: currentFileName || matchingFiles[Math.min(matchingFiles.length - 1, 
               Math.floor((processedCount / Math.max(1, totalEstimated)) * matchingFiles.length))]?.file || ''
           });
         }
       }
     };
 
-    const writeStream = fs.createWriteStream(outputPath, { encoding: this.options.encoding });
+    const writeFlags = (isIncremental && resumeFromBreakpoint && this.exportState.breakpoint) ? 'a' : 'w';
+    const writeStream = fs.createWriteStream(outputPath, { 
+      encoding: this.options.encoding,
+      flags: writeFlags
+    });
     
     const writeAsync = (data) => {
       return new Promise((resolve, reject) => {
@@ -464,47 +578,59 @@ class LogManager extends EventEmitter {
       });
     };
 
-    try {
-      let isFirstRecord = true;
-      const jsonDataStartPos = format === 'json' ? 0 : 0;
+    let checkpointCounter = 0;
+    const CHECKPOINT_INTERVAL = 500;
 
-      if (format === 'csv') {
-        const headers = [
-          '时间',
-          'CPU使用率(%)',
-          '内存使用率(%)',
-          '磁盘使用率(%)',
-          '网络上传(MB/s)',
-          '网络下载(MB/s)',
-          '内存已用(GB)',
-          '内存总量(GB)',
-          '磁盘已用(GB)',
-          '磁盘总量(GB)'
-        ];
-        if (includeProcesses) {
-          headers.push('Top进程名称', 'Top进程CPU(%)', 'Top进程内存(%)');
+    try {
+      if (writeFlags === 'w') {
+        isFirstRecord = true;
+        if (format === 'csv') {
+          const headers = [
+            '时间',
+            'CPU使用率(%)',
+            '内存使用率(%)',
+            '磁盘使用率(%)',
+            '网络上传(MB/s)',
+            '网络下载(MB/s)',
+            '内存已用(GB)',
+            '内存总量(GB)',
+            '磁盘已用(GB)',
+            '磁盘总量(GB)'
+          ];
+          if (includeProcesses) {
+            headers.push('Top进程名称', 'Top进程CPU(%)', 'Top进程内存(%)');
+          }
+          await writeAsync(headers.join(',') + '\n');
+        } else if (format === 'json') {
+          await writeAsync('{\n');
+          await writeAsync(`  "generatedAt": "${new Date().toISOString()}",\n`);
+          await writeAsync(`  "startTime": ${effectiveStartTime ? `"${effectiveStartTime}"` : 'null'},\n`);
+          await writeAsync(`  "endTime": ${endTime ? `"${endTime}"` : 'null'},\n`);
+          if (isIncremental) {
+            await writeAsync(`  "exportMode": "incremental",\n`);
+            await writeAsync(`  "incrementalFrom": ${incrementalStartTimestamp ? `"${incrementalStartTimestamp}"` : 'null'},\n`);
+          }
+          await writeAsync('  "data": [\n');
         }
-        await writeAsync(headers.join(',') + '\n');
-      } else if (format === 'jsonl') {
-        // JSONL 格式：每行一个 JSON 对象
-      } else {
-        await writeAsync('{\n');
-        await writeAsync(`  "generatedAt": "${new Date().toISOString()}",\n`);
-        await writeAsync(`  "startTime": ${startTime ? `"${startTime}"` : 'null'},\n`);
-        await writeAsync(`  "endTime": ${endTime ? `"${endTime}"` : 'null'},\n`);
-        await writeAsync('  "data": [\n');
       }
 
-      for (const indexEntry of matchingFiles) {
+      for (let i = fileIndexOffset; i < matchingFiles.length; i++) {
+        const indexEntry = matchingFiles[i];
+        fileIndexOffset = i;
         const filePath = path.join(this.options.logDir, indexEntry.file);
+        currentFileName = indexEntry.file;
+        
         const stream = fs.createReadStream(filePath, { 
           encoding: this.options.encoding,
-          highWaterMark: 64 * 1024
+          highWaterMark: 64 * 1024,
+          start: i === fileIndexOffset ? lineByteOffset : 0
         });
         let buffer = '';
+        let bytesReadInFile = i === fileIndexOffset ? lineByteOffset : 0;
 
         for await (const chunk of stream) {
           buffer += chunk;
+          bytesReadInFile += Buffer.byteLength(chunk, this.options.encoding);
           const lines = buffer.split('\n');
           buffer = lines.pop();
 
@@ -518,7 +644,7 @@ class LogManager extends EventEmitter {
               continue;
             }
             
-            if (startTime && record.timestamp < startTime) continue;
+            if (effectiveStartTime && record.timestamp <= effectiveStartTime) continue;
             if (endTime && record.timestamp > endTime) continue;
 
             summary.cpu.sum += record.cpu.usage;
@@ -565,27 +691,40 @@ class LogManager extends EventEmitter {
               isFirstRecord = false;
             }
 
+            lastRecordTimestamp = record.timestamp;
             totalExported++;
             processedCount++;
+            lineByteOffset = bytesReadInFile - Buffer.byteLength(buffer, this.options.encoding);
+            
+            checkpointCounter++;
+            if (checkpointCounter >= CHECKPOINT_INTERVAL) {
+              checkpointCounter = 0;
+              await saveBreakpoint();
+            }
+            
             emitProgress();
           }
         }
+        lineByteOffset = 0;
       }
 
       if (format === 'csv') {
-        // CSV 格式，summary 作为注释或单独文件
         if (includeSummary) {
           const calcAvg = (s) => s.count > 0 ? parseFloat((s.sum / s.count).toFixed(2)) : 0;
           await writeAsync('\n');
           await writeAsync('# 统计摘要\n');
+          if (isIncremental) {
+            await writeAsync(`# 导出模式: 增量导出\n`);
+            if (incrementalStartTimestamp) {
+              await writeAsync(`# 增量起点: ${incrementalStartTimestamp}\n`);
+            }
+          }
           await writeAsync(`# CPU - 平均:${calcAvg(summary.cpu)}%, 最高:${summary.cpu.max.toFixed(2)}%, 最低:${summary.cpu.min.toFixed(2)}%\n`);
           await writeAsync(`# 内存 - 平均:${calcAvg(summary.memory)}%, 最高:${summary.memory.max.toFixed(2)}%, 最低:${summary.memory.min.toFixed(2)}%\n`);
           await writeAsync(`# 磁盘 - 平均:${calcAvg(summary.disk)}%, 最高:${summary.disk.max.toFixed(2)}%, 最低:${summary.disk.min.toFixed(2)}%\n`);
           await writeAsync(`# 总记录数: ${totalExported}\n`);
         }
-      } else if (format === 'jsonl') {
-        // JSONL 没有 summary
-      } else {
+      } else if (format === 'json') {
         const calcAvg = (s) => s.count > 0 ? parseFloat((s.sum / s.count).toFixed(2)) : 0;
         
         await writeAsync('\n  ],\n');
@@ -617,6 +756,24 @@ class LogManager extends EventEmitter {
 
       await new Promise(resolve => writeStream.end(resolve));
 
+      let outputFileSize = 0;
+      try {
+        const stats = fs.statSync(outputPath);
+        outputFileSize = stats.size;
+      } catch {}
+
+      if (isIncremental) {
+        this.exportState.lastExportTimestamp = lastRecordTimestamp || this.exportState.lastExportTimestamp;
+        this.exportState.lastExportFile = outputPath;
+        this.exportState.lastExportCount = totalExported;
+        this.exportState.lastExportTime = new Date().toISOString();
+        this.exportState.lastExportSize = outputFileSize;
+        this.exportState.totalExportedCount += totalExported;
+        this.exportState.breakpoint = null;
+        this.exportState.isPartialExport = false;
+        await this._saveExportState();
+      }
+
       if (onProgress) {
         onProgress({
           exported: totalExported,
@@ -644,9 +801,20 @@ class LogManager extends EventEmitter {
         }
       };
 
-      return { totalExported, outputPath, summary: finalSummary };
+      return { 
+        totalExported, 
+        outputPath, 
+        summary: finalSummary,
+        isIncremental,
+        incrementalFrom: incrementalStartTimestamp,
+        incrementalTo: lastRecordTimestamp,
+        outputFileSize
+      };
     } catch (err) {
       writeStream.destroy();
+      if (isIncremental && totalExported > 0) {
+        await saveBreakpoint();
+      }
       throw err;
     }
   }

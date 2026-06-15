@@ -262,12 +262,71 @@
     </div>
 
     <div class="modal-overlay" id="exportModal">
-      <div class="modal">
+      <div class="modal modal-lg">
         <div class="modal-header">
           <h2>导出性能报告</h2>
           <button class="btn-close" id="btnCloseExport">×</button>
         </div>
         <div class="modal-body">
+          <div class="setting-item">
+            <label>导出模式</label>
+            <div class="export-mode-tabs">
+              <button type="button" class="export-mode-tab active" data-mode="full">
+                <div class="mode-icon">📦</div>
+                <div class="mode-info">
+                  <div class="mode-title">全量导出</div>
+                  <div class="mode-desc">导出所有数据</div>
+                </div>
+              </button>
+              <button type="button" class="export-mode-tab" data-mode="incremental">
+                <div class="mode-icon">⚡</div>
+                <div class="mode-info">
+                  <div class="mode-title">增量导出</div>
+                  <div class="mode-desc">仅导出新增数据</div>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          <div class="export-status-card" id="incrementalStatusCard" style="display: none;">
+            <div class="status-header">
+              <span class="status-icon">📊</span>
+              <span class="status-title">增量导出状态</span>
+            </div>
+            <div class="status-body" id="incrementalStatusBody">
+            </div>
+            <div class="status-actions">
+              <button class="btn btn-outline btn-sm" id="btnResetExportState">🔄 重置导出起点</button>
+            </div>
+          </div>
+
+          <div class="export-benefits-card" id="exportBenefitsCard" style="display: none;">
+            <div class="benefits-title">💡 增量导出优势</div>
+            <div class="benefits-grid">
+              <div class="benefit-item">
+                <div class="benefit-icon">⏱️</div>
+                <div class="benefit-text">
+                  <div class="benefit-label">预计节省时间</div>
+                  <div class="benefit-value" id="benefitTime">--</div>
+                </div>
+              </div>
+              <div class="benefit-item">
+                <div class="benefit-icon">💾</div>
+                <div class="benefit-text">
+                  <div class="benefit-label">预计节省空间</div>
+                  <div class="benefit-value" id="benefitSpace">--</div>
+                </div>
+              </div>
+              <div class="benefit-item">
+                <div class="benefit-icon">📉</div>
+                <div class="benefit-text">
+                  <div class="benefit-label">减少处理记录</div>
+                  <div class="benefit-value" id="benefitRecords">--</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="setting-item">
             <label>导出格式</label>
             <select id="exportFormat">
@@ -275,7 +334,7 @@
               <option value="json">JSON (完整数据)</option>
             </select>
           </div>
-          <div class="setting-item">
+          <div class="setting-item" id="exportRangeContainer">
             <label>时间范围</label>
             <select id="exportRange">
               <option value="all">全部数据</option>

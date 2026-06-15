@@ -302,46 +302,129 @@ ipcMain.on('export-report', async (event, options = {}) => {
     return;
   }
 
+  const isIncremental = options.isIncremental === true;
+  const resumeFromBreakpoint = options.resumeFromBreakpoint === true;
+  const exportState = logManager.getExportState();
+
+  let effectiveStartTime = options.startTime;
+  let effectiveEndTime = options.endTime;
+  let incrementalStart = null;
+
+  if (isIncremental) {
+    if (resumeFromBreakpoint && exportState.breakpoint) {
+      effectiveStartTime = exportState.breakpoint.lastTimestamp;
+      incrementalStart = exportState.breakpoint.incrementalStart;
+    } else if (exportState.lastExportTimestamp) {
+      effectiveStartTime = exportState.lastExportTimestamp;
+      incrementalStart = exportState.lastExportTimestamp;
+    }
+  }
+
   const totalRecords = logManager.getTotalRecordCount();
-  if (totalRecords === 0) {
-    event.reply('export-error', { error: '没有可导出的数据' });
+  const remainingRecords = isIncremental ? exportState.remainingRecords : totalRecords;
+
+  if (remainingRecords === 0 && !resumeFromBreakpoint) {
+    if (isIncremental) {
+      event.reply('export-error', { error: '没有新增数据可导出' });
+    } else {
+      event.reply('export-error', { error: '没有可导出的数据' });
+    }
     return;
   }
 
-  const filters = [];
-  if (options.startTime) filters.push(`开始时间: ${options.startTime}`);
-  if (options.endTime) filters.push(`结束时间: ${options.endTime}`);
-  const filterStr = filters.length > 0 ? `_${filters.map(f => f.replace(/[:\s]/g, '-')).join('_')}` : '';
+  const now = new Date();
+  const dateStr = now.toISOString().slice(0, 10);
+  const timeStr = now.toISOString().slice(11, 19).replace(/:/g, '-');
 
-  const result = await dialog.showSaveDialog(mainWindow, {
-    title: '导出性能报告',
-    defaultPath: `performance_report_${new Date().toISOString().slice(0, 10)}${filterStr}.${options.format || 'csv'}`,
-    filters: [
-      { name: 'CSV 文件', extensions: ['csv'] },
-      { name: 'JSON 文件', extensions: ['json'] }
-    ]
-  });
+  let defaultFileName;
+  if (isIncremental) {
+    const fromStr = incrementalStart ? new Date(incrementalStart).toISOString().replace(/[:.]/g, '-') : 'begin';
+    const toStr = now.toISOString().replace(/[:.]/g, '-');
+    defaultFileName = `performance_report_INCREMENTAL_${fromStr}_to_${toStr}.${options.format || 'csv'}`;
+  } else {
+    const filters = [];
+    if (options.startTime) filters.push(`开始时间-${options.startTime.replace(/[:.]/g, '-')}`);
+    if (options.endTime) filters.push(`结束时间-${options.endTime.replace(/[:.]/g, '-')}`);
+    const filterStr = filters.length > 0 ? `_${filters.join('_')}` : '';
+    defaultFileName = `performance_report_${dateStr}_${timeStr}${filterStr}.${options.format || 'csv'}`;
+  }
 
-  if (result.canceled) return;
+  let filePath;
+  if (resumeFromBreakpoint && exportState.breakpoint && exportState.breakpoint.outputPath) {
+    filePath = exportState.breakpoint.outputPath;
+  } else {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: isIncremental ? '增量导出性能报告' : '导出性能报告',
+      defaultPath: defaultFileName,
+      filters: [
+        { name: 'CSV 文件', extensions: ['csv'] },
+        { name: 'JSON 文件', extensions: ['json'] }
+      ]
+    });
 
-  const filePath = result.filePath;
-  const format = filePath.endsWith('.csv') ? 'csv' : 'json';
+    if (result.canceled) return;
+    filePath = result.filePath;
+  }
+
+  const format = filePath.endsWith('.csv') ? 'csv' : filePath.endsWith('.jsonl') ? 'jsonl' : 'json';
   
   try {
     const exportResult = await logManager.exportReport({
       format,
       outputPath: filePath,
-      startTime: options.startTime,
-      endTime: options.endTime,
-      includeProcesses: options.includeProcesses !== false
+      startTime: effectiveStartTime,
+      endTime: effectiveEndTime,
+      includeProcesses: options.includeProcesses !== false,
+      isIncremental,
+      resumeFromBreakpoint
     });
     
     event.reply('export-success', { 
       file: filePath, 
-      count: exportResult.totalExported 
+      count: exportResult.totalExported,
+      isIncremental: exportResult.isIncremental,
+      incrementalFrom: exportResult.incrementalFrom,
+      incrementalTo: exportResult.incrementalTo,
+      outputFileSize: exportResult.outputFileSize,
+      totalRecords,
+      savedRecords: isIncremental ? (totalRecords - exportResult.totalExported) : 0,
+      savedTimeEstimate: isIncremental ? Math.round((totalRecords - exportResult.totalExported) / totalRecords * 100) : 0
     });
   } catch (err) {
     event.reply('export-error', { error: err.message });
+  }
+});
+
+ipcMain.on('get-export-state', (event) => {
+  if (!logManager) {
+    event.reply('export-state', {
+      lastExportTimestamp: null,
+      lastExportFile: null,
+      lastExportCount: 0,
+      lastExportTime: null,
+      lastExportSize: 0,
+      totalExportedCount: 0,
+      breakpoint: null,
+      isPartialExport: false,
+      totalRecords: 0,
+      remainingRecords: 0,
+      hasPendingExports: false
+    });
+    return;
+  }
+  event.reply('export-state', logManager.getExportState());
+});
+
+ipcMain.on('reset-export-state', async (event) => {
+  if (!logManager) {
+    event.reply('export-state-reset', { success: false, error: '未启动日志记录' });
+    return;
+  }
+  try {
+    const state = await logManager.resetExportState();
+    event.reply('export-state-reset', { success: true, state });
+  } catch (err) {
+    event.reply('export-state-reset', { success: false, error: err.message });
   }
 });
 
