@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>系统监控工具 - System Monitor</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <header class="top-bar">
+      <div class="logo">
+        <span class="logo-icon">📊</span>
+        <h1>系统监控工具</h1>
+      </div>
+      <nav class="tabs">
+        <button class="tab-btn active" data-tab="realtime">实时监控</button>
+        <button class="tab-btn" data-tab="history">历史记录</button>
+        <button class="tab-btn" data-tab="files">日志文件</button>
+      </nav>
+      <div class="top-actions">
+        <div class="status-indicator" id="loggingIndicator">
+          <span class="status-dot" id="statusDot"></span>
+          <span id="statusText">待机中</span>
+        </div>
+        <button id="btnStartLog" class="btn btn-primary">开始记录</button>
+        <button id="btnStopLog" class="btn btn-secondary" disabled>停止记录</button>
+        <button id="btnExport" class="btn btn-outline">导出报告</button>
+        <button id="btnSettings" class="btn btn-icon">⚙️</button>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <div class="tab-content active" id="tab-realtime">
+        <section class="stats-cards">
+          <div class="stat-card cpu-card">
+            <div class="stat-icon">💻</div>
+            <div class="stat-info">
+              <h3>CPU 使用率</h3>
+              <div class="stat-value"><span id="cpuValue">0</span>%</div>
+              <div class="stat-detail">
+                <span id="cpuCores">0</span> 核心
+              </div>
+            </div>
+            <div class="stat-bar">
+              <div class="stat-bar-fill" id="cpuBar"></div>
+            </div>
+          </div>
+
+          <div class="stat-card memory-card">
+            <div class="stat-icon">🧠</div>
+            <div class="stat-info">
+              <h3>内存使用率</h3>
+              <div class="stat-value"><span id="memoryValue">0</span>%</div>
+              <div class="stat-detail">
+                <span id="memoryUsed">0</span> / <span id="memoryTotal">0</span> GB
+              </div>
+            </div>
+            <div class="stat-bar">
+              <div class="stat-bar-fill" id="memoryBar"></div>
+            </div>
+          </div>
+
+          <div class="stat-card disk-card">
+            <div class="stat-icon">💾</div>
+            <div class="stat-info">
+              <h3>磁盘使用率</h3>
+              <div class="stat-value"><span id="diskValue">0</span>%</div>
+              <div class="stat-detail">
+                <span id="diskUsed">0</span> / <span id="diskTotal">0</span> GB
+              </div>
+            </div>
+            <div class="stat-bar">
+              <div class="stat-bar-fill" id="diskBar"></div>
+            </div>
+          </div>
+
+          <div class="stat-card network-card">
+            <div class="stat-icon">🌐</div>
+            <div class="stat-info">
+              <h3>网络速率</h3>
+              <div class="stat-value network-value">
+                <span class="network-item">⬆ <span id="networkUp">0</span> MB/s</span>
+              </div>
+              <div class="stat-value network-value">
+                <span class="network-item">⬇ <span id="networkDown">0</span> MB/s</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="charts-section">
+          <div class="chart-card">
+            <div class="chart-header">
+              <h3>CPU & 内存实时趋势</h3>
+            </div>
+            <div class="chart-container">
+              <canvas id="cpuMemoryChart"></canvas>
+            </div>
+          </div>
+
+          <div class="chart-card">
+            <div class="chart-header">
+              <h3>网络实时流量</h3>
+            </div>
+            <div class="chart-container">
+              <canvas id="networkChart"></canvas>
+            </div>
+          </div>
+        </section>
+
+        <section class="bottom-section">
+          <div class="processes-panel">
+            <div class="panel-header">
+              <h3>🔥 资源占用 Top 10 进程</h3>
+              <div class="sort-tabs">
+                <button class="sort-tab active" data-sort="cpu">按 CPU</button>
+                <button class="sort-tab" data-sort="mem">按内存</button>
+              </div>
+            </div>
+            <div class="process-list" id="processList">
+              <div class="loading">加载中...</div>
+            </div>
+          </div>
+
+          <div class="alerts-panel">
+            <div class="panel-header">
+              <h3>⚠️ 告警记录</h3>
+              <span class="badge" id="alertCount">0</span>
+            </div>
+            <div class="alert-list" id="alertList">
+              <div class="empty-state">暂无告警</div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="tab-content" id="tab-history">
+        <div class="history-panel">
+          <div class="panel-header">
+            <h3>📈 历史记录查询</h3>
+            <div class="history-filters">
+              <div class="filter-item">
+                <label>开始时间</label>
+                <input type="datetime-local" id="historyStartTime">
+              </div>
+              <div class="filter-item">
+                <label>结束时间</label>
+                <input type="datetime-local" id="historyEndTime">
+              </div>
+              <button class="btn btn-primary btn-sm" id="btnQueryHistory">查询</button>
+              <button class="btn btn-secondary btn-sm" id="btnLoadMore">加载更多</button>
+            </div>
+          </div>
+          <div class="history-summary" id="historySummary"></div>
+          <div class="history-chart-container">
+            <canvas id="historyChart"></canvas>
+          </div>
+          <div class="history-table-container">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>CPU (%)</th>
+                  <th>内存 (%)</th>
+                  <th>磁盘 (%)</th>
+                  <th>上传 (MB/s)</th>
+                  <th>下载 (MB/s)</th>
+                </tr>
+              </thead>
+              <tbody id="historyTableBody">
+                <tr><td colspan="6" class="empty-state">请选择时间范围并查询</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-content" id="tab-files">
+        <div class="files-panel">
+          <div class="panel-header">
+            <h3>📁 日志文件列表</h3>
+            <div class="file-actions">
+              <button class="btn btn-outline btn-sm" id="btnRefreshFiles">刷新</button>
+              <button class="btn btn-outline btn-sm" id="btnCleanOld">清理旧日志</button>
+            </div>
+          </div>
+          <div class="files-summary" id="filesSummary"></div>
+          <div class="files-table-container">
+            <table class="files-table">
+              <thead>
+                <tr>
+                  <th>文件名</th>
+                  <th>开始时间</th>
+                  <th>结束时间</th>
+                  <th>记录数</th>
+                  <th>文件大小</th>
+                </tr>
+              </thead>
+              <tbody id="filesTableBody">
+                <tr><td colspan="5" class="empty-state">暂无日志文件，请先启动记录</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <div class="modal-overlay" id="settingsModal">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <h2>系统设置</h2>
+          <button class="btn-close" id="btnCloseSettings">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="settings-section">
+            <h3>告警阈值</h3>
+            <div class="setting-item">
+              <label>CPU 告警阈值 (%)</label>
+              <input type="range" id="cpuThreshold" min="10" max="100" value="80">
+              <span class="threshold-value" id="cpuThresholdValue">80%</span>
+            </div>
+            <div class="setting-item">
+              <label>内存告警阈值 (%)</label>
+              <input type="range" id="memoryThreshold" min="10" max="100" value="80">
+              <span class="threshold-value" id="memoryThresholdValue">80%</span>
+            </div>
+            <div class="setting-item">
+              <label>磁盘告警阈值 (%)</label>
+              <input type="range" id="diskThreshold" min="10" max="100" value="90">
+              <span class="threshold-value" id="diskThresholdValue">90%</span>
+            </div>
+          </div>
+          
+          <div class="settings-section">
+            <h3>日志设置</h3>
+            <div class="setting-item">
+              <label>日志写入间隔 (秒)</label>
+              <input type="range" id="logInterval" min="10" max="300" step="10" value="60">
+              <span class="threshold-value" id="logIntervalValue">60秒</span>
+            </div>
+            <div class="setting-item">
+              <label>文件分割策略</label>
+              <select id="splitStrategy">
+                <option value="daily">按天分割</option>
+                <option value="size">按大小分割</option>
+              </select>
+            </div>
+            <div class="setting-item">
+              <label>单文件最大大小 (MB)</label>
+              <input type="range" id="maxFileSize" min="10" max="500" step="10" value="50">
+              <span class="threshold-value" id="maxFileSizeValue">50 MB</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="btnCancelSettings">取消</button>
+          <button class="btn btn-primary" id="btnSaveSettings">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="exportModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h2>导出性能报告</h2>
+          <button class="btn-close" id="btnCloseExport">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="setting-item">
+            <label>导出格式</label>
+            <select id="exportFormat">
+              <option value="csv">CSV (推荐，打开快)</option>
+              <option value="json">JSON (完整数据)</option>
+            </select>
+          </div>
+          <div class="setting-item">
+            <label>时间范围</label>
+            <select id="exportRange">
+              <option value="all">全部数据</option>
+              <option value="today">今天</option>
+              <option value="week">最近7天</option>
+              <option value="custom">自定义</option>
+            </select>
+          </div>
+          <div class="setting-item" id="customRangeContainer" style="display: none;">
+            <label>开始时间</label>
+            <input type="datetime-local" id="exportStartTime">
+          </div>
+          <div class="setting-item" id="customRangeEndContainer" style="display: none;">
+            <label>结束时间</label>
+            <input type="datetime-local" id="exportEndTime">
+          </div>
+          <div class="setting-item">
+            <label class="checkbox-label">
+              <input type="checkbox" id="exportIncludeProcesses" checked>
+              包含进程数据
+            </label>
+          </div>
+          <div class="export-info" id="exportInfo"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="btnCancelExport">取消</button>
+          <button class="btn btn-primary" id="btnConfirmExport">导出</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="cleanModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h2>清理旧日志</h2>
+          <button class="btn-close" id="btnCloseClean">×</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-text">请选择要保留的日志天数，早于此时间的日志将被永久删除。</p>
+          <div class="setting-item">
+            <label>保留天数</label>
+            <select id="cleanDays">
+              <option value="7">最近 7 天</option>
+              <option value="30" selected>最近 30 天</option>
+              <option value="90">最近 90 天</option>
+              <option value="180">最近 180 天</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="btnCancelClean">取消</button>
+          <button class="btn btn-danger" id="btnConfirmClean">确认删除</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

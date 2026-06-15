@@ -1,0 +1,51 @@
+[
+  {
+    "file": "perf_test_2026-06-11_04-30-05.jsonl",
+    "startTime": "2026-06-11T04:30:05.077Z",
+    "endTime": "2026-06-09T05:16:43.080Z",
+    "recordCount": 15000,
+    "size": 6594305
+  },
+  {
+    "file": "perf_test_2026-06-11_04-30-05_1.jsonl",
+    "startTime": "2026-06-11T04:30:05.460Z",
+    "endTime": "2026-06-09T13:36:43.080Z",
+    "recordCount": 15000,
+    "size": 6594271
+  },
+  {
+    "file": "perf_test_2026-06-11_04-30-05_2.jsonl",
+    "startTime": "2026-06-11T04:30:05.789Z",
+    "endTime": "2026-06-09T21:56:43.080Z",
+    "recordCount": 15000,
+    "size": 6594207
+  },
+  {
+    "file": "perf_test_2026-06-11_04-30-06.jsonl",
+    "startTime": "2026-06-11T04:30:06.039Z",
+    "endTime": "2026-06-10T06:16:43.080Z",
+    "recordCount": 15000,
+    "size": 6594292
+  },
+  {
+    "file": "perf_test_2026-06-11_04-30-06_1.jsonl",
+    "startTime": "2026-06-11T04:30:06.289Z",
+    "endTime": "2026-06-10T14:36:43.080Z",
+    "recordCount": 15000,
+    "size": 6594655
+  },
+  {
+    "file": "perf_test_2026-06-11_04-30-06_2.jsonl",
+    "startTime": "2026-06-11T04:30:06.539Z",
+    "endTime": "2026-06-10T22:56:43.080Z",
+    "recordCount": 15000,
+    "size": 6594144
+  },
+  {
+    "file": "perf_test_2026-06-11_04-30-06_3.jsonl",
+    "startTime": "2026-06-11T04:30:06.792Z",
+    "endTime": "2026-06-11T04:30:15.216Z",
+    "recordCount": 10000,
+    "size": 4396070
+  }
+]

@@ -1,0 +1,51 @@
+[
+  {
+    "file": "test_log_2026-06-11_04-30-57.jsonl",
+    "startTime": "2026-06-11T04:30:57.456Z",
+    "endTime": "2026-06-11T04:30:57.460Z",
+    "recordCount": 5,
+    "size": 1440
+  },
+  {
+    "file": "test_log_2026-06-11_04-30-57_1.jsonl",
+    "startTime": "2026-06-11T04:30:57.612Z",
+    "endTime": "2026-06-11T04:30:57.611Z",
+    "recordCount": 5,
+    "size": 1438
+  },
+  {
+    "file": "test_log_2026-06-11_04-30-57_2.jsonl",
+    "startTime": "2026-06-11T04:30:57.764Z",
+    "endTime": "2026-06-11T04:30:57.763Z",
+    "recordCount": 5,
+    "size": 1438
+  },
+  {
+    "file": "test_log_2026-06-11_04-30-57_3.jsonl",
+    "startTime": "2026-06-11T04:30:57.914Z",
+    "endTime": "2026-06-11T04:30:57.913Z",
+    "recordCount": 5,
+    "size": 1436
+  },
+  {
+    "file": "test_log_2026-06-11_04-30-58.jsonl",
+    "startTime": "2026-06-11T04:30:58.064Z",
+    "endTime": "2026-06-11T04:30:58.735Z",
+    "recordCount": 5,
+    "size": 1444
+  },
+  {
+    "file": "test_log_2026-06-11.jsonl",
+    "startTime": "2026-06-11T04:30:58.736Z",
+    "endTime": "2026-06-11T04:30:58.736Z",
+    "recordCount": 0,
+    "size": 1
+  },
+  {
+    "file": "test_log_2026-06-11_1.jsonl",
+    "startTime": "2026-06-11T04:30:58.737Z",
+    "endTime": "2026-06-01T04:30:58.737Z",
+    "recordCount": 5,
+    "size": 799
+  }
+]

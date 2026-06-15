@@ -1,0 +1,22 @@
+{
+  "name": "system-monitor",
+  "version": "1.0.0",
+  "description": "系统监控和性能日志记录桌面工具",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "keywords": [
+    "system",
+    "monitor",
+    "performance"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0"
+  },
+  "dependencies": {
+    "systeminformation": "^5.21.0"
+  }
+}
